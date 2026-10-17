@@ -32,7 +32,7 @@ const pingFunPay = async () => {
         const response = await axios.get('https://funpay.com/', { headers: funpayHeaders });
         
         // التحقق الذكي: يتأكد من أن الكوكيز صالحة وأن اسم حسابك ظاهر في الصفحة
-        if (response.status === 200 && response.data.includes('QuickSellProo')) {
+        if (response.status === 200 && response.data.includes('ELhafzleek12')) {
             console.log(`[${new Date().toISOString()}] FunPay Status: Online 🟢`);
         } else if (response.status === 200) {
             console.log(`[${new Date().toISOString()}] FunPay Error: Cookies Expired / Logged Out 🔴`);
