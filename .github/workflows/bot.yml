@@ -2,24 +2,28 @@ name: FunPay Stealth Automation
 
 on:
   schedule:
-    # يحاول تشغيل السكريبت تلقائياً كل ساعة لضمان الاستمرارية
-    - cron: '0 * * * *'
+    # يعمل كخط احتياطي إذا توقف البوت لأي سبب طارئ
+    - cron: '*/30 * * * *'
   workflow_dispatch:
+
+# صلاحية لتشغيل الجلسة التالية تلقائياً قبل إغلاق الجلسة الحالية
+permissions:
+  actions: write
+  contents: read
 
 concurrency:
   group: funpay-stealth-group
-  # يمنع إيقاف السكريبت الحالي إذا كان لا يزال يعمل
-  cancel-in-progress: false 
+  cancel-in-progress: false
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
 
@@ -30,3 +34,11 @@ jobs:
         env:
           FUNPAY_COOKIES: ${{ secrets.FUNPAY_COOKIES }}
         run: node bot.js
+
+      - name: Trigger Next Session Immediately (Zero Downtime)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Triggering the next workflow session immediately..."
+          gh workflow run "FunPay Stealth Automation" --ref ${{ github.ref_name }}
