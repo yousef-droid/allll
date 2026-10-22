@@ -1,11 +1,14 @@
 const axios = require('axios');
 
-const FUNPAY_COOKIES = process.env.FUNPAY_COOKIES;
+const RAW_COOKIES = process.env.FUNPAY_COOKIES;
 
-if (!FUNPAY_COOKIES) {
+if (!RAW_COOKIES) {
     console.error("Error: FUNPAY_COOKIES not found in Secrets!");
     process.exit(1);
 }
+
+// تنظيف الكوكيز من أي أسطر جديدة أو مسافات زائدة تسبب خطأ 400
+const FUNPAY_COOKIES = RAW_COOKIES.replace(/[\r\n]+/g, '').trim();
 
 // ============================================================================
 // روابط صفحات العروض (Trade URLs) المراد عمل Boost لها تلقائياً
@@ -29,51 +32,69 @@ const baseHeaders = {
 // متغير لحفظ بيانات الجلسة (CSRF Token & User ID)
 let appData = null;
 
-// 1. دالة جلب بيانات الحساب وتحديث حالة الأونلاين عبر الصفحة الرئيسية + Runner
+// 1. دالة جلب بيانات الحساب وتحديث حالة الأونلاين
 const keepAliveOnline = async () => {
     try {
-        const response = await axios.get('https://funpay.com/en/', {
+        const response = await axios.get('https://funpay.com/', {
             headers: {
                 ...baseHeaders,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                 'Sec-Fetch-Dest': 'document',
                 'Sec-Fetch-Mode': 'navigate',
                 'Sec-Fetch-Site': 'same-origin',
-                'Upgrade-Insecure-Requests': '1'
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1',
+                'Referer': 'https://funpay.com/'
             }
         });
 
         const html = response.data;
 
-        if (response.status === 200 && html.includes('ELhafzleek12')) {
-            // استخراج بيانات الجلسة (CSRF Token) لاستخدامها في الـ Runner والـ Boost
-            const appDataMatch = html.match(/data-app-data="([^"]+)"/);
-            if (appDataMatch) {
+        // استخراج بيانات الجلسة (CSRF Token & userId)
+        const appDataMatch = html.match(/data-app-data="([^"]+)"/);
+        if (appDataMatch) {
+            try {
                 const decodedJson = appDataMatch[1].replace(/&quot;/g, '"');
                 const parsed = JSON.parse(decodedJson);
                 appData = Array.isArray(parsed) ? parsed[0] : parsed;
+            } catch (e) {
+                // تجاهل أخطاء فك الـ JSON إن وجدت
+            }
+        }
+
+        const isLoggedIn = (appData && appData.userId) || html.includes('ELhafzleek12') || html.includes('user-link-dropdown');
+
+        if (response.status === 200 && isLoggedIn) {
+            // إرسال نبضة إلى /runner/ بالصيغة القياسية لـ FunPay (معزولة حتى لا تعطل السكريبت)
+            if (appData && appData['csrf-token'] && appData.userId) {
+                try {
+                    const cpuObj = {
+                        type: "c-p-u",
+                        id: String(appData.userId),
+                        tag: "00000000",
+                        data: false
+                    };
+                    const params = new URLSearchParams();
+                    params.append('objects', JSON.stringify([cpuObj]));
+                    params.append('request', 'false');
+                    params.append('csrf_token', appData['csrf-token']);
+
+                    await axios.post('https://funpay.com/runner/', params.toString(), {
+                        headers: {
+                            ...baseHeaders,
+                            'Accept': 'application/json, text/javascript, */*; q=0.01',
+                            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'Origin': 'https://funpay.com',
+                            'Referer': 'https://funpay.com/'
+                        }
+                    });
+                } catch (runnerErr) {
+                    // حتى لو رفض الـ runner الطلب، فتح الصفحة بالأعلى كافٍ لتجديد الأونلاين كل دقيقتين
+                }
             }
 
-            // إرسال نبضة إلى /runner/ لتأكيد حالة Online 100% بدون أي تأخير
-            if (appData && appData['csrf-token']) {
-                const params = new URLSearchParams();
-                params.append('objects', JSON.stringify([]));
-                params.append('request', 'false');
-                params.append('csrf_token', appData['csrf-token']);
-
-                await axios.post('https://funpay.com/runner/', params.toString(), {
-                    headers: {
-                        ...baseHeaders,
-                        'Accept': 'application/json, text/javascript, */*; q=0.01',
-                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Origin': 'https://funpay.com',
-                        'Referer': 'https://funpay.com/en/'
-                    }
-                });
-            }
-
-            console.log(`[${new Date().toISOString()}] FunPay Status: Online 🟢 (Runner Heartbeat Sent)`);
+            console.log(`[${new Date().toISOString()}] FunPay Status: Online 🟢 (User ID: ${appData?.userId || 'Active'})`);
             return true;
         } else {
             console.log(`[${new Date().toISOString()}] FunPay Error: Cookies Expired / Logged Out 🔴`);
@@ -93,7 +114,7 @@ const boostOfferUrl = async (tradeUrl) => {
             headers: {
                 ...baseHeaders,
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Referer': 'https://funpay.com/en/'
+                'Referer': 'https://funpay.com/'
             }
         });
 
@@ -157,13 +178,13 @@ const boostOfferUrl = async (tradeUrl) => {
 (async () => {
     console.log("--> Starting FunPay High-Stealth Keep-Alive & Auto-Boost Session...");
 
-    // مدة الجلسة: 5 ساعات و 30 دقيقة (لتجنب الإغلاق الإجباري من GitHub عند 6 ساعات)
+    // مدة الجلسة: 5 ساعات و 30 دقيقة
     const maxDurationMs = 5.5 * 60 * 60 * 1000;
     const startTime = Date.now();
     const endTime = startTime + maxDurationMs;
 
     let lastBoostCheckTime = 0;
-    // فحص الـ Boost كل 15 دقيقة (لضمان التقاط البوست فور فتحه بعد الـ 3 ساعات)
+    // فحص الـ Boost كل 15 دقيقة
     const boostCheckIntervalMs = 15 * 60 * 1000; 
 
     let cycle = 1;
